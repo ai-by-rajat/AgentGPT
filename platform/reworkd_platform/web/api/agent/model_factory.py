@@ -39,19 +39,34 @@ def create_model(
         settings, model_settings, user
     )
 
-    # Default API key to a non-empty string if provider is Ollama,
-    # as ChatOpenAI client requires it, even if not used.
-    api_key = (
-        model_settings.custom_api_key
-        or settings.openai_api_key
-        or ("ollama" if provider == "ollama" else None)
-    )
+    # Determine the actual model name to be passed to the LLM
+    actual_llm_model_name = llm_model
+    if provider == "ollama" and isinstance(llm_model, str) and llm_model.startswith("ollama/"):
+        actual_llm_model_name = llm_model.split("/", 1)[1]
+
+    # API key handling
+    if provider == "ollama":
+        # Ollama doesn't use an API key in the traditional sense via ChatOpenAI,
+        # but ChatOpenAI class requires a non-empty openai_api_key.
+        api_key_to_use = "ollama"
+    elif model_settings.custom_api_key:
+        api_key_to_use = model_settings.custom_api_key
+    elif settings.openai_api_key and settings.openai_api_key != "<Should be updated via env>":
+        api_key_to_use = settings.openai_api_key
+    else:
+        # This case should ideally not be hit if configuration is correct
+        # and an appropriate provider (Ollama/Custom/Azure/OpenAI with key) is chosen.
+        # If it is, it means we are trying to use a provider (likely OpenAI) without a valid key.
+        # Forcing a dummy key here for ChatOpenAI if no other key is found and provider isn't ollama.
+        # This might still lead to auth errors with actual OpenAI, but satisfies ChatOpenAI's requirement.
+        api_key_to_use = "none"
+
 
     kwargs = {
         "openai_api_base": base,
-        "openai_api_key": api_key,
+        "openai_api_key": api_key_to_use,
         "temperature": model_settings.temperature,
-        "model": llm_model,
+        "model": actual_llm_model_name,
         "max_tokens": model_settings.max_tokens,
         "streaming": streaming,
         "max_retries": 5,
@@ -114,9 +129,18 @@ def get_base_and_headers(
     elif settings_.openai_api_base:
         provider = "openai"
         base = settings_.openai_api_base
-    else: # Default to OpenAI public API if no other provider is configured
-        provider = "openai"
-        base = "https://api.openai.com/v1"
-
+    elif not settings_.ollama_enabled and not use_custom_key and not use_azure and not use_helicone:
+        # This case means no specific provider is configured other than potentially plain OpenAI.
+        # Default to public OpenAI API if an API key is available, otherwise no provider can be determined.
+        if settings_.openai_api_key and settings_.openai_api_key != "<Should be updated via env>":
+            provider = "openai"
+            base = "https://api.openai.com/v1"
+        else:
+            # No valid provider could be determined with the current settings
+            provider = None
+            base = None
+    # If ollama_enabled is true, and other conditions didn't match (e.g. custom key),
+    # it should have been caught by the `if use_ollama:` block.
+    # If we reach here and provider is still None, it means no valid configuration was found.
 
     return base, headers, use_helicone, provider

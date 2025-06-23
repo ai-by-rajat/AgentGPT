@@ -5,36 +5,45 @@ import { GPT_35_TURBO, OLLAMA_LLAMA2, MAX_TOKENS } from "../types"; // Import OL
 export const DEFAULT_MAX_LOOPS_FREE = 25 as const;
 export const DEFAULT_MAX_LOOPS_CUSTOM_API_KEY = 10 as const;
 
-// Helper to determine if Ollama is likely configured
-// This is a client-side heuristic. The backend will ultimately decide.
+// Helper to determine if Ollama is likely configured on the client-side
 const isOllamaLikelyConfigured = () => {
-  // A simple check, you might want to make this more robust
-  // e.g., by checking localStorage or a global variable set by an env var
+  // Check for the specific environment variable.
+  // This variable should be set during the build process or via .env.local for development.
   return process.env.NEXT_PUBLIC_OLLAMA_ENABLED === "true";
 };
 
 export const getDefaultModelSettings = (): ModelSettings => {
   const defaultOpenAIModel: GPTModelNames = GPT_35_TURBO;
-  const defaultOllamaModel: GPTModelNames = OLLAMA_LLAMA2;
+  const defaultOllamaModel: GPTModelNames = OLLAMA_LLAMA2; // Default Ollama model
 
-  // Prefer Ollama if it's likely configured and no custom API key is present
-  // This is a heuristic; the backend ultimately determines model availability.
-  const customApiKey = typeof window !== "undefined" ? localStorage.getItem("agentgpt-settings-storage-v2") : "";
-  const hasCustomApiKey = customApiKey && JSON.parse(customApiKey)?.state?.modelSettings?.customApiKey;
+  let preferredModel: GPTModelNames = defaultOpenAIModel;
+  let customApiKeyExists = false;
 
+  if (typeof window !== "undefined") {
+    try {
+      const settingsString = localStorage.getItem("agentgpt-settings-storage-v2");
+      if (settingsString) {
+        const settings = JSON.parse(settingsString);
+        if (settings?.state?.modelSettings?.customApiKey) {
+          customApiKeyExists = true;
+        }
+      }
+    } catch (e) {
+      console.error("Error parsing settings from localStorage", e);
+    }
+  }
 
-  const preferredModel =
-    isOllamaLikelyConfigured() && !hasCustomApiKey
-      ? defaultOllamaModel
-      : defaultOpenAIModel;
+  if (isOllamaLikelyConfigured() && !customApiKeyExists) {
+    preferredModel = defaultOllamaModel;
+  }
 
   return {
-    customApiKey: "",
+    customApiKey: "", // This will be populated from localStorage by the store itself if it exists
     language: ENGLISH,
     customModelName: preferredModel,
     customTemperature: 0.8,
     customMaxLoops: DEFAULT_MAX_LOOPS_FREE,
-    maxTokens: MAX_TOKENS[preferredModel] / 2 || 1250, // Default to half of the model's max tokens
+    maxTokens: MAX_TOKENS[preferredModel] ? MAX_TOKENS[preferredModel] / 2 : 1250, // Default to half of the model's max tokens
   };
 };
 
