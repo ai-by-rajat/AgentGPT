@@ -19,24 +19,11 @@ class ModelWithAccess(BaseModel):
     )
 
     @staticmethod
-    def from_model(
-        name: str, max_tokens: int, user: UserBase, settings: Settings
+    def from_model( # This method is not strictly needed anymore if has_access is determined prior to calling
+        name: str, max_tokens: int, determined_has_access: bool
     ) -> "ModelWithAccess":
-        has_access = False
-        is_ollama_model = name.startswith("ollama/")
-
-        if is_ollama_model:
-            has_access = settings.ollama_enabled
-        elif user is not None: # For OpenAI models, user needs to be authenticated (or have a custom key)
-            has_access = True
-
-        # If a custom API key is provided by the user, they effectively have access to any model they define
-        # The frontend store for modelSettings would typically hold this customApiKey
-        # However, this specific endpoint doesn't have direct access to user's client-side modelSettings store.
-        # Access for custom key scenarios is implicitly handled by allowing users to input any model name.
-        # The critical check is whether the backend is configured for the *type* of model (OpenAI, Ollama).
-
-        return ModelWithAccess(name=name, max_tokens=max_tokens, has_access=has_access)
+        # The 'has_access' is now determined by the caller loop logic in get_models
+        return ModelWithAccess(name=name, max_tokens=max_tokens, has_access=determined_has_access)
 
 
 @router.get("")
@@ -57,16 +44,25 @@ async def get_models(
             if settings.ollama_enabled:
                 access_granted = True
         elif is_openai_model:
-            # OpenAI models are accessible if user is logged in (for platform keys)
-            # or if they might provide their own key (implicitly handled by frontend)
-            # or if a general OpenAI endpoint is configured.
-            if user or settings.openai_api_key or settings.openai_api_base:
+            # OpenAI models are accessible if:
+            # 1. User is logged in (platform may use its own keys or user provides custom key via UI).
+            # 2. Platform has a valid OpenAI API key configured (not the placeholder).
+            # 3. Platform has a specific OpenAI API base configured (e.g., Azure, other proxy).
+            # The user providing a custom key via UI is handled by the UI allowing model selection;
+            # this endpoint primarily determines which models the *platform* can support.
+            platform_has_valid_openai_key = settings.openai_api_key and settings.openai_api_key != "<Should be updated via env>"
+            if user or platform_has_valid_openai_key or settings.openai_api_base:
                 access_granted = True
 
+        # The from_model static method's has_access logic also needs to be in sync.
+        # We're calling from_model only for models where access_granted is true based on the loop's logic.
+        # So, the has_access inside from_model will re-evaluate but should yield the same result
+        # if its own logic is consistent.
+        # For clarity, we can simplify `ModelWithAccess.from_model` as its `has_access` is determined here.
+
         if access_granted:
-             available_models.append(
-                ModelWithAccess.from_model(
-                    name=model_name, max_tokens=tokens, user=user, settings=settings
-                )
-            )
+            # Pass the already determined access_granted status
+            model_instance = ModelWithAccess(name=model_name, max_tokens=tokens, has_access=access_granted)
+            available_models.append(model_instance)
+
     return available_models

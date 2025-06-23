@@ -41,24 +41,39 @@ export const useModelSettingsStore = createSelectors(
         name: "agentgpt-settings-storage-v2",
         storage: createJSONStorage(() => localStorage),
         partialize: (state) => {
-          const modelSettings = { ...state.modelSettings };
-          const currentModel = modelSettings.customModelName;
+          const incomingModelSettings = { ...state.modelSettings };
+          let newModelName = incomingModelSettings.customModelName;
+          const customApiKey = incomingModelSettings.customApiKey;
 
-          // If the current model is an OpenAI model but no API key is set,
-          // and Ollama seems to be an option, switch to a default Ollama model.
-          // This is a client-side heuristic.
-          const isOpenAIModel = currentModel.startsWith("gpt-");
-          const ollamaLikelyEnabled = process.env.NEXT_PUBLIC_OLLAMA_ENABLED === "true"; // Simplified check
+          const ollamaIsEnabledClientSide = process.env.NEXT_PUBLIC_OLLAMA_ENABLED === "true";
+          const defaultOllamaModel: GPTModelNames = OLLAMA_LLAMA2;
+          const defaultOpenAIModel: GPTModelNames = GPT_35_TURBO;
 
-          if (isOpenAIModel && !modelSettings.customApiKey && ollamaLikelyEnabled) {
-            modelSettings.customModelName = OLLAMA_LLAMA2; // Default Ollama model
-          } else if (!Object.keys(MAX_TOKENS).includes(currentModel)) {
-            // Fallback if the current model name is somehow invalid
-            modelSettings.customModelName = GPT_35_TURBO;
+          if (ollamaIsEnabledClientSide && !customApiKey) {
+            // If Ollama is enabled client-side and there's no custom API key,
+            // prioritize Ollama models.
+            if (!newModelName.startsWith("ollama/")) {
+              newModelName = defaultOllamaModel;
+            }
+          } else if (customApiKey && newModelName.startsWith("ollama/")) {
+            // If a custom API key is present (implying OpenAI) but an Ollama model is selected,
+            // switch to a default OpenAI model.
+            newModelName = defaultOpenAIModel;
+          } else if (!customApiKey && !ollamaIsEnabledClientSide && newModelName.startsWith("ollama/")) {
+            // If no custom API key, Ollama not enabled, but an Ollama model is set, switch to OpenAI default.
+             newModelName = defaultOpenAIModel;
           }
 
-          // Ensure maxTokens is valid for the selected model
-          const modelMaxTokens = MAX_TOKENS[modelSettings.customModelName as GPTModelNames] || 4000;
+
+          // Ensure the selected model name is valid, otherwise fallback.
+          if (!Object.keys(MAX_TOKENS).includes(newModelName)) {
+            newModelName = ollamaIsEnabledClientSide && !customApiKey ? defaultOllamaModel : defaultOpenAIModel;
+          }
+
+          incomingModelSettings.customModelName = newModelName;
+
+          // Ensure maxTokens is valid for the (potentially new) selected model
+          const modelMaxTokens = MAX_TOKENS[newModelName as GPTModelNames] || 4000;
           modelSettings.maxTokens = Math.min(
             modelSettings.maxTokens,
             modelMaxTokens
